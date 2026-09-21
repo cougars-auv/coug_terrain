@@ -1,1 +1,9 @@
 repositories:
+  ground_segmentation:
+    type: zip
+    url: https://github.com/dfki-ric/ground_segmentation/archive/refs/heads/master.zip
+    version: ground_segmentation-master
+  ground_segmentation_ros2:
+    type: zip
+    url: https://github.com/dfki-ric/ground_segmentation_ros2/archive/refs/heads/master.zip
+    version: ground_segmentation_ros2-master
