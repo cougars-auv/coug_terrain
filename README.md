@@ -1,9 +1,9 @@
-# 🌊 CoUGARs Package Template
+# 🌊 CoUGARs Terrain Navigation
 
-[![ROS 2 Build & Test](https://github.com/cougars-auv/coug_template/actions/workflows/ros2_build_test.yaml/badge.svg)](https://github.com/cougars-auv/coug_template/actions/workflows/ros2_build_test.yaml)
-[![Docker Build](https://github.com/cougars-auv/coug_template/actions/workflows/docker_build.yaml/badge.svg)](https://github.com/cougars-auv/coug_template/actions/workflows/docker_build.yaml)
-[![pre-commit.ci status](https://results.pre-commit.ci/badge/github/cougars-auv/coug_template/main.svg)](https://results.pre-commit.ci/latest/github/cougars-auv/coug_template/main)
-[![codecov](https://codecov.io/gh/cougars-auv/coug_template/graph/badge.svg?token=92GLUNI35L)](https://codecov.io/gh/cougars-auv/coug_template)
+[![ROS 2 Build & Test](https://github.com/cougars-auv/coug_terrain/actions/workflows/ros2_build_test.yaml/badge.svg)](https://github.com/cougars-auv/coug_terrain/actions/workflows/ros2_build_test.yaml)
+[![Docker Build](https://github.com/cougars-auv/coug_terrain/actions/workflows/docker_build.yaml/badge.svg)](https://github.com/cougars-auv/coug_terrain/actions/workflows/docker_build.yaml)
+[![pre-commit.ci status](https://results.pre-commit.ci/badge/github/cougars-auv/coug_terrain/main.svg)](https://results.pre-commit.ci/latest/github/cougars-auv/coug_terrain/main)
+[![codecov](https://codecov.io/gh/cougars-auv/coug_terrain/graph/badge.svg?token=92GLUNI35L)](https://codecov.io/gh/cougars-auv/coug_terrain)
 
 ## Contributing
 
