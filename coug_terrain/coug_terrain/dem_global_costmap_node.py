@@ -44,6 +44,7 @@ class DemGlobalCostmapNode(Node):
         self.declare_parameter("max_slope_degrees", 25.0)
         self.declare_parameter("resolution", 1.0)
         self.declare_parameter("outside_is_lethal", False)
+        self.declare_parameter("fallback_size", 500.0)
         self.declare_parameter("origin_topic", "/origin")
         self.declare_parameter("output_topic", "terrain/occupancy")
         self.declare_parameter("map_frame", "map")
@@ -52,28 +53,37 @@ class DemGlobalCostmapNode(Node):
         self._max_slope_degrees = self.get_parameter("max_slope_degrees").value
         self._resolution = self.get_parameter("resolution").value
         self._outside_is_lethal = self.get_parameter("outside_is_lethal").value
+        self._fallback_size = self.get_parameter("fallback_size").value
         origin_topic = self.get_parameter("origin_topic").value
         output_topic = self.get_parameter("output_topic").value
         self._map_frame = self.get_parameter("map_frame").value
 
         self._published = False
 
+        latched_qos = QoSProfile(
+            depth=1,
+            reliability=ReliabilityPolicy.RELIABLE,
+            durability=DurabilityPolicy.TRANSIENT_LOCAL,
+            history=HistoryPolicy.KEEP_LAST,
+        )
+        self._output_pub = self.create_publisher(OccupancyGrid, output_topic, latched_qos)
+
         if dem_file:
             self._slope, self._lat, self._lon = self._load_dem(dem_file)
-
-            latched_qos = QoSProfile(
-                depth=1,
-                reliability=ReliabilityPolicy.RELIABLE,
-                durability=DurabilityPolicy.TRANSIENT_LOCAL,
-                history=HistoryPolicy.KEEP_LAST,
-            )
 
             self._origin_sub = self.create_subscription(
                 NavSatFix, origin_topic, self._origin_callback, qos_profile_system_default
             )
-            self._output_pub = self.create_publisher(OccupancyGrid, output_topic, latched_qos)
         else:
-            self.get_logger().info("No 'dem_file' set. Terrain prior disabled.")
+            resolution = self._resolution
+            width = height = max(1, math.ceil(self._fallback_size / resolution))
+            grid = np.full((height, width), _FREE, dtype=np.int8)
+
+            self.get_logger().info(
+                f"No 'dem_file' set. Flat costmap published: {width}x{height} "
+                f"at {resolution:.2f} m, all free."
+            )
+            self._publish_grid(grid, -0.5 * width * resolution, -0.5 * height * resolution)
 
         self.get_logger().info("Initialization complete.")
 
@@ -149,10 +159,17 @@ class DemGlobalCostmapNode(Node):
             f"{int(np.count_nonzero(grid == _FREE))} free, "
             f"{int(np.count_nonzero(grid == _UNKNOWN))} unknown."
         )
+        self._publish_grid(grid, min_east, min_north)
+
+        self.get_logger().info(f"DEM anchored: Lat {msg.latitude:.6f}, Lon {msg.longitude:.6f}")
+
+    def _publish_grid(self, grid: np.ndarray, min_east: float, min_north: float) -> None:
+        height, width = grid.shape
+
         occupancy_grid_msg = OccupancyGrid()
         occupancy_grid_msg.header.stamp = self.get_clock().now().to_msg()
         occupancy_grid_msg.header.frame_id = self._map_frame
-        occupancy_grid_msg.info.resolution = resolution
+        occupancy_grid_msg.info.resolution = self._resolution
         occupancy_grid_msg.info.width = width
         occupancy_grid_msg.info.height = height
         occupancy_grid_msg.info.origin.position.x = min_east
@@ -162,8 +179,6 @@ class DemGlobalCostmapNode(Node):
 
         self._output_pub.publish(occupancy_grid_msg)
         self._published = True
-
-        self.get_logger().info(f"DEM anchored: Lat {msg.latitude:.6f}, Lon {msg.longitude:.6f}")
 
 
 def main(args: list[str] | None = None) -> None:
