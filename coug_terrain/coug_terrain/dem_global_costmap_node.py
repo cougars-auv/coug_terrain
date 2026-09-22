@@ -15,6 +15,7 @@
 import math
 
 import numpy as np
+import numpy.typing as npt
 import pymap3d as pm
 import rclpy
 from nav_msgs.msg import OccupancyGrid
@@ -87,7 +88,9 @@ class DemGlobalCostmapNode(Node):
 
         self.get_logger().info("Initialization complete.")
 
-    def _load_dem(self, path: str) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    def _load_dem(
+        self, path: str
+    ) -> tuple[npt.NDArray[np.float64], npt.NDArray[np.float64], npt.NDArray[np.float64]]:
         dem_dataset = gdal.Open(path, gdal.GA_ReadOnly)
         slope_dataset = gdal.DEMProcessing(
             "", dem_dataset, "slope", format="MEM", computeEdges=True
@@ -163,7 +166,7 @@ class DemGlobalCostmapNode(Node):
 
         self.get_logger().info(f"DEM anchored: Lat {msg.latitude:.6f}, Lon {msg.longitude:.6f}")
 
-    def _publish_grid(self, grid: np.ndarray, min_east: float, min_north: float) -> None:
+    def _publish_grid(self, grid: npt.NDArray[np.int8], min_east: float, min_north: float) -> None:
         height, width = grid.shape
 
         occupancy_grid_msg = OccupancyGrid()
