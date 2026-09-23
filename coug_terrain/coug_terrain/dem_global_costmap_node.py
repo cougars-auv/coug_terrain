@@ -81,8 +81,8 @@ class DemGlobalCostmapNode(Node):
             grid = np.full((height, width), _FREE, dtype=np.int8)
 
             self.get_logger().info(
-                f"No 'dem_file' set. Flat costmap published: {width}x{height} "
-                f"at {resolution:.2f} m, all free."
+                f"No 'dem_file' set; published a flat {width}x{height} costmap at "
+                f"{resolution:.2f} m/cell with all cells free."
             )
             self._publish_grid(grid, -0.5 * width * resolution, -0.5 * height * resolution)
 
@@ -123,8 +123,8 @@ class DemGlobalCostmapNode(Node):
         lat = lon_lat[:, 1].reshape(height, width)
 
         self.get_logger().info(
-            f"DEM loaded: {width}x{height} at {geo_transform[1]:.2f} m/px, "
-            f"slope {np.nanmin(slope):.1f}-{np.nanmax(slope):.1f} deg."
+            f"DEM loaded: {width}x{height} cells at {geo_transform[1]:.2f} m/cell, "
+            f"slope {np.nanmin(slope):.1f} to {np.nanmax(slope):.1f} deg."
         )
         return slope, lat, lon
 
@@ -157,14 +157,14 @@ class DemGlobalCostmapNode(Node):
             grid[grid == _UNKNOWN] = _LETHAL
 
         self.get_logger().info(
-            f"Costmap published: {width}x{height} at {resolution:.2f} m, "
-            f"{int(np.count_nonzero(grid == _LETHAL))} lethal, "
+            f"Costmap published: {width}x{height} cells at {resolution:.2f} m/cell "
+            f"({int(np.count_nonzero(grid == _LETHAL))} lethal, "
             f"{int(np.count_nonzero(grid == _FREE))} free, "
-            f"{int(np.count_nonzero(grid == _UNKNOWN))} unknown."
+            f"{int(np.count_nonzero(grid == _UNKNOWN))} unknown)."
         )
         self._publish_grid(grid, min_east, min_north)
 
-        self.get_logger().info(f"DEM anchored: Lat {msg.latitude:.6f}, Lon {msg.longitude:.6f}")
+        self.get_logger().info(f"DEM anchored at lat {msg.latitude:.6f}, lon {msg.longitude:.6f}.")
 
     def _publish_grid(self, grid: npt.NDArray[np.int8], min_east: float, min_north: float) -> None:
         height, width = grid.shape
