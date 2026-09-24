@@ -49,6 +49,7 @@ def launch_setup(context: LaunchContext, *args: Any, **kwargs: Any) -> list[Acti
     agent_ns = LaunchConfiguration("agent_ns")
 
     agent_ns_str = agent_ns.perform(context)
+    scenario_param_path = LaunchConfiguration("scenario_param_file").perform(context)
 
     config_dir = os.environ["CONFIG_DIR"]
     coug_terrain_dir = get_package_share_directory("coug_terrain")
@@ -59,20 +60,18 @@ def launch_setup(context: LaunchContext, *args: Any, **kwargs: Any) -> list[Acti
     agent_param_file = PathJoinSubstitution(
         [EnvironmentVariable("CONFIG_DIR"), [agent_ns, "_params.yaml"]]
     )
-    scenario_param_file = (
-        LaunchConfiguration("scenario_param_file").perform(context) or agent_param_file
-    )
+    scenario_param_file = scenario_param_path or agent_param_file
 
-    fleet_launch_params = load_launch_params(
-        os.path.join(config_dir, "fleet", "coug_terrain_params.yaml"), "/**"
-    )
-    agent_launch_params = load_launch_params(
-        os.path.join(config_dir, f"{agent_ns_str}_params.yaml"), f"/{agent_ns_str}"
-    )
-    scenario_launch_params = load_launch_params(scenario_param_file, "/**")
-    dem_filename = scenario_launch_params.get(
-        "dem_file", agent_launch_params.get("dem_file", fleet_launch_params.get("dem_file"))
-    )
+    fleet_param_path = os.path.join(config_dir, "fleet", "coug_terrain_params.yaml")
+    agent_param_path = os.path.join(config_dir, f"{agent_ns_str}_params.yaml")
+
+    launch_params = {
+        **load_launch_params(fleet_param_path, "/**"),
+        **load_launch_params(agent_param_path, f"/{agent_ns_str}"),
+        **load_launch_params(scenario_param_path, "/**"),
+        **load_launch_params(scenario_param_path, f"/{agent_ns_str}"),
+    }
+    dem_filename = launch_params.get("dem_file")
     dem_file = os.path.join(coug_terrain_dir, "dem", dem_filename) if dem_filename else ""
 
     return [
