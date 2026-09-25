@@ -12,11 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import array
 import math
 
 import numpy as np
 import numpy.typing as npt
-import pymap3d as pm
 import rclpy
 from nav_msgs.msg import OccupancyGrid
 from osgeo import gdal, osr
@@ -33,6 +33,9 @@ from sensor_msgs.msg import NavSatFix
 _UNKNOWN = -1
 _FREE = 0
 _LETHAL = 100
+
+_WGS84_A = 6378137.0  # [m]
+_WGS84_B = 6356752.314245  # [m]
 
 gdal.UseExceptions()
 
@@ -70,7 +73,7 @@ class DemGlobalCostmapNode(Node):
         self._output_pub = self.create_publisher(OccupancyGrid, output_topic, latched_qos)
 
         if dem_file:
-            self._slope, self._lat, self._lon = self._load_dem(dem_file)
+            self._slope_dataset = self._load_dem(dem_file)
 
             self._origin_sub = self.create_subscription(
                 NavSatFix, origin_topic, self._origin_callback, qos_profile_system_default
@@ -88,76 +91,56 @@ class DemGlobalCostmapNode(Node):
 
         self.get_logger().info("Initialization complete.")
 
-    def _load_dem(
-        self, path: str
-    ) -> tuple[npt.NDArray[np.float64], npt.NDArray[np.float64], npt.NDArray[np.float64]]:
+    def _load_dem(self, path: str) -> gdal.Dataset:
         dem_dataset = gdal.Open(path, gdal.GA_ReadOnly)
         slope_dataset = gdal.DEMProcessing(
             "", dem_dataset, "slope", format="MEM", computeEdges=True
         )
-        slope_band = slope_dataset.GetRasterBand(1)
-        slope = slope_band.ReadAsArray()
-
-        nodata_value = slope_band.GetNoDataValue()
-        if nodata_value is not None:
-            slope[slope == nodata_value] = np.nan
-
-        width, height = dem_dataset.RasterXSize, dem_dataset.RasterYSize
-        geo_transform = dem_dataset.GetGeoTransform()
-
-        cols, rows = np.meshgrid(np.arange(width) + 0.5, np.arange(height) + 0.5)
-        raster_x = geo_transform[0] + cols * geo_transform[1] + rows * geo_transform[2]
-        raster_y = geo_transform[3] + cols * geo_transform[4] + rows * geo_transform[5]
-
-        raster_crs = osr.SpatialReference(wkt=dem_dataset.GetProjection())
-        wgs84_crs = osr.SpatialReference()
-        wgs84_crs.ImportFromEPSG(4326)
-        raster_crs.SetAxisMappingStrategy(osr.OAMS_TRADITIONAL_GIS_ORDER)
-        wgs84_crs.SetAxisMappingStrategy(osr.OAMS_TRADITIONAL_GIS_ORDER)
-        to_wgs84 = osr.CoordinateTransformation(raster_crs, wgs84_crs)
-
-        lon_lat = np.asarray(
-            to_wgs84.TransformPoints(np.column_stack([raster_x.ravel(), raster_y.ravel()]).tolist())
-        )
-        lon = lon_lat[:, 0].reshape(height, width)
-        lat = lon_lat[:, 1].reshape(height, width)
+        slope_min, slope_max = slope_dataset.GetRasterBand(1).ComputeRasterMinMax(False)
 
         self.get_logger().info(
-            f"DEM loaded: {width}x{height} cells at {geo_transform[1]:.2f} m/cell, "
-            f"slope {np.nanmin(slope):.1f} to {np.nanmax(slope):.1f} deg."
+            f"DEM loaded: {dem_dataset.RasterXSize}x{dem_dataset.RasterYSize} cells at "
+            f"{dem_dataset.GetGeoTransform()[1]:.2f} m/cell, "
+            f"slope {slope_min:.1f} to {slope_max:.1f} deg."
         )
-        return slope, lat, lon
+        return slope_dataset
 
     def _origin_callback(self, msg: NavSatFix) -> None:
         if self._published:
             return
 
-        east, north, _ = pm.geodetic2enu(
-            self._lat, self._lon, 0.0, msg.latitude, msg.longitude, 0.0
+        map_crs = osr.SpatialReference()
+        map_crs.ImportFromProj4(
+            f"+proj=aeqd +lat_0={msg.latitude} +lon_0={msg.longitude} "
+            f"+a={_WGS84_A + msg.altitude} +b={_WGS84_B + msg.altitude} +units=m"
         )
 
-        resolution = self._resolution
-        min_east, max_east = float(np.min(east)), float(np.max(east))
-        min_north, max_north = float(np.min(north)), float(np.max(north))
-        width = max(1, math.ceil((max_east - min_east) / resolution))
-        height = max(1, math.ceil((max_north - min_north) / resolution))
-
-        col_idx = np.clip(((east - min_east) / resolution).astype(np.int32), 0, width - 1)
-        row_idx = np.clip(((north - min_north) / resolution).astype(np.int32), 0, height - 1)
+        map_dataset = gdal.Warp(
+            "",
+            self._slope_dataset,
+            format="MEM",
+            dstSRS=map_crs.ExportToWkt(),
+            xRes=self._resolution,
+            yRes=self._resolution,
+            resampleAlg="max",
+            dstNodata=np.nan,
+        )
+        slope = np.flipud(map_dataset.GetRasterBand(1).ReadAsArray())
+        geo_transform = map_dataset.GetGeoTransform()
+        height, width = slope.shape
+        min_east = geo_transform[0]
+        min_north = geo_transform[3] + height * geo_transform[5]
 
         grid = np.full((height, width), _UNKNOWN, dtype=np.int8)
-        is_valid = np.isfinite(self._slope)
-        cell_indices = row_idx[is_valid] * width + col_idx[is_valid]
-        is_steep = self._slope[is_valid] > self._max_slope_degrees
-        flat_grid = grid.reshape(-1)
-        flat_grid[cell_indices] = _FREE
-        flat_grid[cell_indices[is_steep]] = _LETHAL
+        is_valid = np.isfinite(slope)
+        grid[is_valid] = _FREE
+        grid[is_valid & (slope > self._max_slope_degrees)] = _LETHAL
 
         if self._outside_is_lethal:
             grid[grid == _UNKNOWN] = _LETHAL
 
         self.get_logger().info(
-            f"Costmap published: {width}x{height} cells at {resolution:.2f} m/cell "
+            f"Costmap published: {width}x{height} cells at {self._resolution:.2f} m/cell "
             f"({int(np.count_nonzero(grid == _LETHAL))} lethal, "
             f"{int(np.count_nonzero(grid == _FREE))} free, "
             f"{int(np.count_nonzero(grid == _UNKNOWN))} unknown)."
@@ -178,7 +161,7 @@ class DemGlobalCostmapNode(Node):
         occupancy_grid_msg.info.origin.position.x = min_east
         occupancy_grid_msg.info.origin.position.y = min_north
         occupancy_grid_msg.info.origin.orientation.w = 1.0
-        occupancy_grid_msg.data = grid.ravel().tolist()
+        occupancy_grid_msg.data = array.array("b", grid.tobytes())
 
         self._output_pub.publish(occupancy_grid_msg)
         self._published = True
