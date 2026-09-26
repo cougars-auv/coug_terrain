@@ -14,6 +14,7 @@
 
 import array
 import math
+import time
 
 import numpy as np
 import numpy.typing as npt
@@ -36,8 +37,14 @@ _LETHAL = 100
 
 _WGS84_A = 6378137.0  # [m]
 _WGS84_B = 6356752.314245  # [m]
+_SECONDS_PER_YEAR = 365.25 * 86400.0
+
+_EPSG_WGS84 = 4326
+_EPSG_NAD83_2011_3D = 6319
+_EPSG_ITRF2014_3D = 7912
 
 gdal.UseExceptions()
+osr.UseExceptions()
 
 
 class DemGlobalCostmapNode(Node):
@@ -57,7 +64,7 @@ class DemGlobalCostmapNode(Node):
         self._max_slope_degrees = self.get_parameter("max_slope_degrees").value
         self._resolution = self.get_parameter("resolution").value
         self._outside_is_lethal = self.get_parameter("outside_is_lethal").value
-        self._fallback_size = self.get_parameter("fallback_size").value
+        fallback_size = self.get_parameter("fallback_size").value
         origin_topic = self.get_parameter("origin_topic").value
         output_topic = self.get_parameter("output_topic").value
         self._map_frame = self.get_parameter("map_frame").value
@@ -74,20 +81,19 @@ class DemGlobalCostmapNode(Node):
 
         if dem_file:
             self._slope_dataset = self._load_dem(dem_file)
-
             self._origin_sub = self.create_subscription(
                 NavSatFix, origin_topic, self._origin_callback, qos_profile_system_default
             )
         else:
-            resolution = self._resolution
-            width = height = max(1, math.ceil(self._fallback_size / resolution))
+            width = height = max(1, math.ceil(fallback_size / self._resolution))
             grid = np.full((height, width), _FREE, dtype=np.int8)
-
+            self._publish_grid(
+                grid, -0.5 * width * self._resolution, -0.5 * height * self._resolution
+            )
             self.get_logger().info(
                 f"No 'dem_file' set; published a flat {width}x{height} costmap at "
-                f"{resolution:.2f} m/cell with all cells free."
+                f"{self._resolution:.2f} m/cell with all cells free."
             )
-            self._publish_grid(grid, -0.5 * width * resolution, -0.5 * height * resolution)
 
         self.get_logger().info("Initialization complete.")
 
@@ -105,49 +111,80 @@ class DemGlobalCostmapNode(Node):
         )
         return slope_dataset
 
+    @staticmethod
+    def _geographic_crs(epsg: int) -> osr.SpatialReference:
+        crs = osr.SpatialReference()
+        crs.ImportFromEPSG(epsg)
+        crs.SetAxisMappingStrategy(osr.OAMS_TRADITIONAL_GIS_ORDER)
+        return crs
+
+    @staticmethod
+    def _map_crs(origin: NavSatFix) -> osr.SpatialReference:
+        # Raise the ellipsoid to the origin altitude to match navsat_odom ENU
+        crs = osr.SpatialReference()
+        crs.ImportFromProj4(
+            f"+proj=aeqd +lat_0={origin.latitude} +lon_0={origin.longitude} "
+            f"+a={_WGS84_A + origin.altitude} +b={_WGS84_B + origin.altitude} +units=m"
+        )
+        crs.SetAxisMappingStrategy(osr.OAMS_TRADITIONAL_GIS_ORDER)
+        return crs
+
+    def _nad83_offset(self, origin: NavSatFix) -> tuple[float, float]:
+        # Shift USGS 3DEP data from NAD83(2011) onto ITRF2014 (~WGS 84) at the current epoch
+        epoch = 1970.0 + time.time() / _SECONDS_PER_YEAR
+        itrf2014_crs = self._geographic_crs(_EPSG_ITRF2014_3D)
+        itrf2014_crs.SetCoordinateEpoch(epoch)
+        itrf2014_T_nad83 = osr.CoordinateTransformation(
+            self._geographic_crs(_EPSG_NAD83_2011_3D), itrf2014_crs
+        )
+        lon, lat, _, _ = itrf2014_T_nad83.TransformPoint(
+            origin.longitude, origin.latitude, origin.altitude, epoch
+        )
+        map_T_wgs84 = osr.CoordinateTransformation(
+            self._geographic_crs(_EPSG_WGS84), self._map_crs(origin)
+        )
+        east, north, _ = map_T_wgs84.TransformPoint(lon, lat)
+        return east, north
+
     def _origin_callback(self, msg: NavSatFix) -> None:
         if self._published:
             return
 
-        map_crs = osr.SpatialReference()
-        map_crs.ImportFromProj4(
-            f"+proj=aeqd +lat_0={msg.latitude} +lon_0={msg.longitude} "
-            f"+a={_WGS84_A + msg.altitude} +b={_WGS84_B + msg.altitude} +units=m"
-        )
+        try:
+            map_dataset = gdal.Warp(
+                "",
+                self._slope_dataset,
+                format="MEM",
+                dstSRS=self._map_crs(msg).ExportToWkt(),
+                xRes=self._resolution,
+                yRes=self._resolution,
+                resampleAlg="max",
+                dstNodata=np.nan,
+            )
+            east_offset, north_offset = self._nad83_offset(msg)
+        except RuntimeError as e:
+            self.get_logger().error(f"Failed to warp DEM into the map frame: {e}")
+            return
 
-        map_dataset = gdal.Warp(
-            "",
-            self._slope_dataset,
-            format="MEM",
-            dstSRS=map_crs.ExportToWkt(),
-            xRes=self._resolution,
-            yRes=self._resolution,
-            resampleAlg="max",
-            dstNodata=np.nan,
-        )
         slope = np.flipud(map_dataset.GetRasterBand(1).ReadAsArray())
-        geo_transform = map_dataset.GetGeoTransform()
         height, width = slope.shape
-        min_east = geo_transform[0]
-        min_north = geo_transform[3] + height * geo_transform[5]
+        geo_transform = map_dataset.GetGeoTransform()
+        min_east = geo_transform[0] + east_offset
+        min_north = geo_transform[3] + height * geo_transform[5] + north_offset
 
-        grid = np.full((height, width), _UNKNOWN, dtype=np.int8)
-        is_valid = np.isfinite(slope)
-        grid[is_valid] = _FREE
-        grid[is_valid & (slope > self._max_slope_degrees)] = _LETHAL
+        grid = np.where(slope > self._max_slope_degrees, _LETHAL, _FREE).astype(np.int8)
+        grid[np.isnan(slope)] = _LETHAL if self._outside_is_lethal else _UNKNOWN
 
-        if self._outside_is_lethal:
-            grid[grid == _UNKNOWN] = _LETHAL
+        self._publish_grid(grid, min_east, min_north)
+        self._published = True
 
         self.get_logger().info(
             f"Costmap published: {width}x{height} cells at {self._resolution:.2f} m/cell "
-            f"({int(np.count_nonzero(grid == _LETHAL))} lethal, "
-            f"{int(np.count_nonzero(grid == _FREE))} free, "
-            f"{int(np.count_nonzero(grid == _UNKNOWN))} unknown)."
+            f"({np.count_nonzero(grid == _LETHAL)} lethal, "
+            f"{np.count_nonzero(grid == _FREE)} free, "
+            f"{np.count_nonzero(grid == _UNKNOWN)} unknown), "
+            f"anchored at lat {msg.latitude:.6f}, lon {msg.longitude:.6f}."
         )
-        self._publish_grid(grid, min_east, min_north)
-
-        self.get_logger().info(f"DEM anchored at lat {msg.latitude:.6f}, lon {msg.longitude:.6f}.")
 
     def _publish_grid(self, grid: npt.NDArray[np.int8], min_east: float, min_north: float) -> None:
         height, width = grid.shape
@@ -164,7 +201,6 @@ class DemGlobalCostmapNode(Node):
         occupancy_grid_msg.data = array.array("b", grid.tobytes())
 
         self._output_pub.publish(occupancy_grid_msg)
-        self._published = True
 
 
 def main(args: list[str] | None = None) -> None:
