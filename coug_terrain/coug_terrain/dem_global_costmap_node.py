@@ -80,7 +80,17 @@ class DemGlobalCostmapNode(Node):
         self._output_pub = self.create_publisher(OccupancyGrid, output_topic, latched_qos)
 
         if dem_file:
-            self._slope_dataset = self._load_dem(dem_file)
+            dem_dataset = gdal.Open(dem_file, gdal.GA_ReadOnly)
+            self._slope_dataset = gdal.DEMProcessing(
+                "", dem_dataset, "slope", format="MEM", computeEdges=True
+            )
+            slope_min, slope_max = self._slope_dataset.GetRasterBand(1).ComputeRasterMinMax(False)
+            self.get_logger().info(
+                f"DEM loaded: {dem_dataset.RasterXSize}x{dem_dataset.RasterYSize} cells at "
+                f"{dem_dataset.GetGeoTransform()[1]:.2f} m/cell, "
+                f"slope {slope_min:.1f} to {slope_max:.1f} deg."
+            )
+
             self._origin_sub = self.create_subscription(
                 NavSatFix, origin_topic, self._origin_callback, qos_profile_system_default
             )
@@ -97,55 +107,6 @@ class DemGlobalCostmapNode(Node):
 
         self.get_logger().info("Initialization complete.")
 
-    def _load_dem(self, path: str) -> gdal.Dataset:
-        dem_dataset = gdal.Open(path, gdal.GA_ReadOnly)
-        slope_dataset = gdal.DEMProcessing(
-            "", dem_dataset, "slope", format="MEM", computeEdges=True
-        )
-        slope_min, slope_max = slope_dataset.GetRasterBand(1).ComputeRasterMinMax(False)
-
-        self.get_logger().info(
-            f"DEM loaded: {dem_dataset.RasterXSize}x{dem_dataset.RasterYSize} cells at "
-            f"{dem_dataset.GetGeoTransform()[1]:.2f} m/cell, "
-            f"slope {slope_min:.1f} to {slope_max:.1f} deg."
-        )
-        return slope_dataset
-
-    @staticmethod
-    def _geographic_crs(epsg: int) -> osr.SpatialReference:
-        crs = osr.SpatialReference()
-        crs.ImportFromEPSG(epsg)
-        crs.SetAxisMappingStrategy(osr.OAMS_TRADITIONAL_GIS_ORDER)
-        return crs
-
-    @staticmethod
-    def _map_crs(origin: NavSatFix) -> osr.SpatialReference:
-        # Raise the ellipsoid to the origin altitude to match navsat_odom ENU
-        crs = osr.SpatialReference()
-        crs.ImportFromProj4(
-            f"+proj=aeqd +lat_0={origin.latitude} +lon_0={origin.longitude} "
-            f"+a={_WGS84_A + origin.altitude} +b={_WGS84_B + origin.altitude} +units=m"
-        )
-        crs.SetAxisMappingStrategy(osr.OAMS_TRADITIONAL_GIS_ORDER)
-        return crs
-
-    def _nad83_offset(self, origin: NavSatFix) -> tuple[float, float]:
-        # Shift USGS 3DEP data from NAD83(2011) onto ITRF2014 (~WGS 84) at the current epoch
-        epoch = 1970.0 + time.time() / _SECONDS_PER_YEAR
-        itrf2014_crs = self._geographic_crs(_EPSG_ITRF2014_3D)
-        itrf2014_crs.SetCoordinateEpoch(epoch)
-        itrf2014_T_nad83 = osr.CoordinateTransformation(
-            self._geographic_crs(_EPSG_NAD83_2011_3D), itrf2014_crs
-        )
-        lon, lat, _, _ = itrf2014_T_nad83.TransformPoint(
-            origin.longitude, origin.latitude, origin.altitude, epoch
-        )
-        map_T_wgs84 = osr.CoordinateTransformation(
-            self._geographic_crs(_EPSG_WGS84), self._map_crs(origin)
-        )
-        east, north, _ = map_T_wgs84.TransformPoint(lon, lat)
-        return east, north
-
     def _origin_callback(self, msg: NavSatFix) -> None:
         if self._published:
             return
@@ -161,7 +122,21 @@ class DemGlobalCostmapNode(Node):
                 resampleAlg="max",
                 dstNodata=np.nan,
             )
-            east_offset, north_offset = self._nad83_offset(msg)
+
+            # Shift USGS 3DEP data from NAD83(2011) onto ITRF2014 (~WGS 84) at the current epoch
+            epoch = 1970.0 + time.time() / _SECONDS_PER_YEAR
+            itrf2014_crs = self._geographic_crs(_EPSG_ITRF2014_3D)
+            itrf2014_crs.SetCoordinateEpoch(epoch)
+            itrf2014_T_nad83 = osr.CoordinateTransformation(
+                self._geographic_crs(_EPSG_NAD83_2011_3D), itrf2014_crs
+            )
+            lon, lat, _, _ = itrf2014_T_nad83.TransformPoint(
+                msg.longitude, msg.latitude, msg.altitude, epoch
+            )
+            map_T_wgs84 = osr.CoordinateTransformation(
+                self._geographic_crs(_EPSG_WGS84), self._map_crs(msg)
+            )
+            east_offset, north_offset, _ = map_T_wgs84.TransformPoint(lon, lat)
         except RuntimeError as e:
             self.get_logger().error(f"Failed to warp DEM into the map frame: {e}")
             return
@@ -201,6 +176,22 @@ class DemGlobalCostmapNode(Node):
         occupancy_grid_msg.data = array.array("b", grid.tobytes())
 
         self._output_pub.publish(occupancy_grid_msg)
+
+    def _map_crs(self, origin: NavSatFix) -> osr.SpatialReference:
+        # Raise the ellipsoid to the origin altitude to match navsat_odom ENU
+        crs = osr.SpatialReference()
+        crs.ImportFromProj4(
+            f"+proj=aeqd +lat_0={origin.latitude} +lon_0={origin.longitude} "
+            f"+a={_WGS84_A + origin.altitude} +b={_WGS84_B + origin.altitude} +units=m"
+        )
+        crs.SetAxisMappingStrategy(osr.OAMS_TRADITIONAL_GIS_ORDER)
+        return crs
+
+    def _geographic_crs(self, epsg: int) -> osr.SpatialReference:
+        crs = osr.SpatialReference()
+        crs.ImportFromEPSG(epsg)
+        crs.SetAxisMappingStrategy(osr.OAMS_TRADITIONAL_GIS_ORDER)
+        return crs
 
 
 def main(args: list[str] | None = None) -> None:
