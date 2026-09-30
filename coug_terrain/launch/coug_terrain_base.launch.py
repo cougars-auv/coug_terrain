@@ -61,18 +61,39 @@ def launch_setup(context: LaunchContext, *args: Any, **kwargs: Any) -> list[Acti
     if not dem_filename:
         return []
     dem_file = os.path.join(coug_terrain_dir, "dem", dem_filename)
+    dsm_filename = launch_params.get("dsm_file")
+    dsm_file = os.path.join(coug_terrain_dir, "dsm", dsm_filename) if dsm_filename else ""
+    dsm_dem_filename = launch_params.get("dsm_dem_file")
+    dsm_dem_file = (
+        os.path.join(coug_terrain_dir, "dem", dsm_dem_filename) if dsm_dem_filename else ""
+    )
 
     return [
         Node(
             package="coug_terrain",
-            executable="dem_global_costmap",
-            name="dem_global_costmap_node",
+            executable="dem_costmap",
+            name="dem_costmap_node",
             parameters=[
                 fleet_param_file,
                 scenario_param_file,
                 {
                     "use_sim_time": use_sim_time,
                     "dem_file": dem_file,
+                    "map_frame": "map",
+                },
+            ],
+        ),
+        Node(
+            package="coug_terrain",
+            executable="dsm_costmap",
+            name="dsm_costmap_node",
+            parameters=[
+                fleet_param_file,
+                scenario_param_file,
+                {
+                    "use_sim_time": use_sim_time,
+                    "dsm_file": dsm_file,
+                    "dem_file": dsm_dem_file,
                     "map_frame": "map",
                 },
             ],

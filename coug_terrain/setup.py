@@ -25,7 +25,8 @@ setup(
     },
     entry_points={
         "console_scripts": [
-            "dem_global_costmap = coug_terrain.dem_global_costmap_node:main",
+            "dem_costmap = coug_terrain.dem_costmap_node:main",
+            "dsm_costmap = coug_terrain.dsm_costmap_node:main",
         ],
     },
 )
