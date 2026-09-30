@@ -13,6 +13,7 @@ setup(
         ("share/" + package_name, ["package.xml"]),
         (os.path.join("share", package_name, "config"), glob("config/*.yaml")),
         (os.path.join("share", package_name, "dem"), glob("dem/*.tif") + glob("dem/*.vrt")),
+        (os.path.join("share", package_name, "dsm"), glob("dsm/*.tif") + glob("dsm/*.vrt")),
         (os.path.join("share", package_name, "launch"), glob("launch/*.launch.py")),
     ],
     zip_safe=True,
