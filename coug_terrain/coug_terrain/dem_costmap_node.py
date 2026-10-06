@@ -95,6 +95,24 @@ class DemCostmapNode(Node):
         if self._published:
             return
 
+        grid_msg = self._convert_to_occupancy_grid(msg)
+        if grid_msg is None:
+            return
+
+        self._output_pub.publish(grid_msg)
+        self._published = True
+
+        grid = np.asarray(grid_msg.data, dtype=np.int8)
+        self.get_logger().info(
+            f"Costmap published: {grid_msg.info.width}x{grid_msg.info.height} cells "
+            f"at {self._resolution:.2f} m/cell "
+            f"({np.count_nonzero(grid == LETHAL)} lethal, "
+            f"{np.count_nonzero(grid == FREE)} free, "
+            f"{np.count_nonzero(grid == UNKNOWN)} unknown), "
+            f"anchored at lat {msg.latitude:.6f}, lon {msg.longitude:.6f}."
+        )
+
+    def _convert_to_occupancy_grid(self, msg: NavSatFix) -> OccupancyGrid | None:
         # Warp the slope raster into the map frame around the origin
         try:
             slope, min_east, min_north = warp_to_map(
@@ -102,30 +120,18 @@ class DemCostmapNode(Node):
             )
         except RuntimeError as e:
             self.get_logger().error(f"Failed to warp DEM into the map frame: {e}")
-            return
+            return None
 
-        height, width = slope.shape
         grid = np.where(slope > self._max_slope_degrees, LETHAL, FREE).astype(np.int8)
         grid[np.isnan(slope)] = LETHAL if self._outside_is_lethal else UNKNOWN
 
-        self._output_pub.publish(
-            occupancy_grid(
-                grid,
-                min_east,
-                min_north,
-                self._resolution,
-                self._map_frame,
-                self.get_clock().now().to_msg(),
-            )
-        )
-        self._published = True
-
-        self.get_logger().info(
-            f"Costmap published: {width}x{height} cells at {self._resolution:.2f} m/cell "
-            f"({np.count_nonzero(grid == LETHAL)} lethal, "
-            f"{np.count_nonzero(grid == FREE)} free, "
-            f"{np.count_nonzero(grid == UNKNOWN)} unknown), "
-            f"anchored at lat {msg.latitude:.6f}, lon {msg.longitude:.6f}."
+        return occupancy_grid(
+            grid,
+            min_east,
+            min_north,
+            self._resolution,
+            self._map_frame,
+            self.get_clock().now().to_msg(),
         )
 
 
