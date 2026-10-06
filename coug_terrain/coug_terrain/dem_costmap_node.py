@@ -68,7 +68,7 @@ class DemCostmapNode(Node):
             slope_min, slope_max = self._slope_dataset.GetRasterBand(1).ComputeRasterMinMax(False)
             self.get_logger().info(
                 f"DEM loaded: {dem_dataset.RasterXSize}x{dem_dataset.RasterYSize} cells at "
-                f"{dem_dataset.GetGeoTransform()[1]:.2f} m/cell, "
+                f"{dem_dataset.GetGeoTransform()[1]:g} m/cell, "
                 f"slope {slope_min:.1f} to {slope_max:.1f} deg."
             )
         else:
@@ -86,7 +86,7 @@ class DemCostmapNode(Node):
             self._published = True
             self.get_logger().info(
                 f"No 'dem_file' set; published a flat {grid.shape[1]}x{grid.shape[0]} costmap "
-                f"at {self._resolution:.2f} m/cell with all cells free."
+                f"at {self._resolution:g} m/cell with all cells free."
             )
 
         self.get_logger().info("Initialization complete.")
@@ -105,7 +105,7 @@ class DemCostmapNode(Node):
         grid = np.asarray(grid_msg.data, dtype=np.int8)
         self.get_logger().info(
             f"Costmap published: {grid_msg.info.width}x{grid_msg.info.height} cells "
-            f"at {self._resolution:.2f} m/cell "
+            f"at {self._resolution:g} m/cell "
             f"({np.count_nonzero(grid == LETHAL)} lethal, "
             f"{np.count_nonzero(grid == FREE)} free, "
             f"{np.count_nonzero(grid == UNKNOWN)} unknown), "

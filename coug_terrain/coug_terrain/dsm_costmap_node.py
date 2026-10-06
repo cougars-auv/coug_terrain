@@ -87,7 +87,7 @@ class DsmCostmapNode(Node):
             self._published = True
             self.get_logger().info(
                 f"No 'dsm_file' or 'dem_file' set; published a flat "
-                f"{grid.shape[1]}x{grid.shape[0]} costmap at {self._resolution:.2f} m/cell "
+                f"{grid.shape[1]}x{grid.shape[0]} costmap at {self._resolution:g} m/cell "
                 f"with all cells free."
             )
 
@@ -107,7 +107,7 @@ class DsmCostmapNode(Node):
         grid = np.asarray(grid_msg.data, dtype=np.int8)
         self.get_logger().info(
             f"Costmap published: {grid_msg.info.width}x{grid_msg.info.height} cells "
-            f"at {self._resolution:.2f} m/cell "
+            f"at {self._resolution:g} m/cell "
             f"({np.count_nonzero(grid == LETHAL)} lethal, "
             f"{np.count_nonzero(grid == FREE)} free, "
             f"{np.count_nonzero(grid == UNKNOWN)} unknown), "
@@ -175,8 +175,8 @@ class DsmCostmapNode(Node):
         mask = mask_band.ReadAsArray()
         obstacle_percent = 100.0 * np.mean(mask[mask != _MASK_NODATA] == LETHAL)
         self.get_logger().info(
-            f"DSM loaded: {width}x{height} cells at {geo_transform[1]:.2f} m/cell, "
-            f"{obstacle_percent:.2f}% above {max_obstacle_height:.2f} m."
+            f"DSM loaded: {width}x{height} cells at {geo_transform[1]:g} m/cell, "
+            f"{obstacle_percent:.2f}% above {max_obstacle_height:g} m."
         )
         return mask_dataset
 
