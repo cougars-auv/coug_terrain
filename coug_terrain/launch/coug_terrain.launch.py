@@ -79,6 +79,7 @@ def launch_setup(context: LaunchContext, *args: Any, **kwargs: Any) -> list[Acti
     dsm_dem_file = (
         os.path.join(coug_terrain_dir, "dem", dsm_dem_filename) if dsm_dem_filename else ""
     )
+    ahrs_topic = launch_params["ahrs_topic"]
 
     return [
         Node(
@@ -127,7 +128,7 @@ def launch_setup(context: LaunchContext, *args: Any, **kwargs: Any) -> list[Acti
             ],
             remappings=[
                 ("/ground_segmentation/input_pointcloud", "camera/point_cloud/cloud_registered"),
-                ("/ground_segmentation/input_imu", "camera/imu/data"),
+                ("/ground_segmentation/input_imu", ahrs_topic),
                 ("/ground_segmentation/ground_points", "ground_segmentation/ground_points"),
                 ("/ground_segmentation/obstacle_points", "ground_segmentation/obstacle_points"),
                 ("/ground_segmentation/raw_points", "ground_segmentation/raw_points"),
