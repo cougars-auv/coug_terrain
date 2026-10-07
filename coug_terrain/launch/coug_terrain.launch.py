@@ -116,7 +116,7 @@ def launch_setup(context: LaunchContext, *args: Any, **kwargs: Any) -> list[Acti
         Node(
             package="ground_segmentation_ros2",
             executable="ground_segmentation_ros2_node",
-            name="ground_segmentation_node",
+            name="ground_segmentation",
             parameters=[
                 fleet_param_file,
                 agent_param_file,
